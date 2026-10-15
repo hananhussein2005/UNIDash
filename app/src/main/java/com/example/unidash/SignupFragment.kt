@@ -19,109 +19,123 @@ class SignupFragment : Fragment() {
     private lateinit var auth: FirebaseAuth
     private lateinit var database: FirebaseDatabase
 
+    private var selectedRole: String = "buyer"
+
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
         savedInstanceState: Bundle?
     ): View {
-        _binding = FragmentSignupBinding.inflate(inflater, container, false)
+        _binding = FragmentSignupBinding.inflate(
+            inflater,
+            container,
+            false
+        )
         return binding.root
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // Initialize Firebase
         auth = FirebaseAuth.getInstance()
         database = FirebaseDatabase.getInstance()
 
-        // Create Account button
+        // Get the role passed from the previous screen.
+        selectedRole = arguments?.getString("role") ?: "buyer"
+
         binding.signupButton.setOnClickListener {
 
             val name = binding.nameEditText.text.toString().trim()
             val email = binding.emailEditText.text.toString().trim()
             val password = binding.passwordEditText.text.toString().trim()
 
-            // Check that all fields are filled
             if (name.isEmpty() || email.isEmpty() || password.isEmpty()) {
-
                 Toast.makeText(
                     requireContext(),
                     "Please fill in all fields",
                     Toast.LENGTH_SHORT
                 ).show()
-
                 return@setOnClickListener
             }
 
-            // Check password length
             if (password.length < 6) {
-
                 Toast.makeText(
                     requireContext(),
                     "Password must be at least 6 characters",
                     Toast.LENGTH_SHORT
                 ).show()
-
                 return@setOnClickListener
             }
 
-            // Create Firebase Authentication account
             auth.createUserWithEmailAndPassword(email, password)
                 .addOnCompleteListener { task ->
 
+                    if (_binding == null) return@addOnCompleteListener
+
                     if (task.isSuccessful) {
 
-                        // Get the newly created Firebase user
                         val user = auth.currentUser
 
-                        if (user != null) {
-
-                            // Firebase's unique ID for this user
-                            val userId = user.uid
-
-                            // Create the user's profile
-                            val userProfile = hashMapOf(
-                                "name" to name,
-                                "email" to email,
-                                "address" to "",
-                                "phone" to ""
-                            )
-
-                            // Save profile to Realtime Database
-                            database.reference
-                                .child("users")
-                                .child(userId)
-                                .setValue(userProfile)
-                                .addOnCompleteListener { databaseTask ->
-
-                                    if (databaseTask.isSuccessful) {
-
-                                        Toast.makeText(
-                                            requireContext(),
-                                            "Account created successfully!",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
-
-                                        // Go back to Login
-                                        findNavController().navigate(
-                                            R.id.action_signupFragment_to_loginFragment
-                                        )
-
-                                    } else {
-
-                                        Toast.makeText(
-                                            requireContext(),
-                                            "Account created, but profile could not be saved.",
-                                            Toast.LENGTH_LONG
-                                        ).show()
-                                    }
-                                }
+                        if (user == null) {
+                            Toast.makeText(
+                                requireContext(),
+                                "Account created, but user information could not be loaded.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            return@addOnCompleteListener
                         }
+
+                        val userId = user.uid
+
+                        val userProfile = hashMapOf(
+                            "name" to name,
+                            "email" to email,
+                            "address" to "",
+                            "phone" to "",
+                            "role" to selectedRole
+                        )
+
+                        database.reference
+                            .child("users")
+                            .child(userId)
+                            .setValue(userProfile)
+                            .addOnCompleteListener { databaseTask ->
+
+                                if (_binding == null) {
+                                    return@addOnCompleteListener
+                                }
+
+                                if (databaseTask.isSuccessful) {
+
+                                    Toast.makeText(
+                                        requireContext(),
+                                        "Account created as ${selectedRole}!",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+
+                                    // Return to Login while preserving the role.
+                                    val bundle = Bundle().apply {
+                                        putString("role", selectedRole)
+                                    }
+
+                                    findNavController().navigate(
+                                        R.id.action_signupFragment_to_loginFragment,
+                                        bundle
+                                    )
+
+                                } else {
+
+                                    Toast.makeText(
+                                        requireContext(),
+                                        "Account created, but profile could not be saved: " +
+                                                "${databaseTask.exception?.message}",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            }
 
                     } else {
 
-                        // Firebase Authentication failed
                         Toast.makeText(
                             requireContext(),
                             "Sign up failed: ${task.exception?.message}",
@@ -131,9 +145,15 @@ class SignupFragment : Fragment() {
                 }
         }
 
-        // Back to Login button
         binding.backToLoginButton.setOnClickListener {
-            findNavController().navigateUp()
+            val bundle = Bundle().apply {
+                putString("role", selectedRole)
+            }
+
+            findNavController().navigate(
+                R.id.action_signupFragment_to_loginFragment,
+                bundle
+            )
         }
     }
 

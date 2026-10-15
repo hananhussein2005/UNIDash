@@ -1,39 +1,102 @@
 <?xml version="1.0" encoding="utf-8"?>
 <navigation xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/nav_graph"
-    app:startDestination="@id/loginFragment">
+    app:startDestination="@id/roleSelectionFragment">
+
+    <fragment
+        android:id="@+id/roleSelectionFragment"
+        android:name="com.example.unidash.RoleSelectionFragment"
+        android:label="Choose Your Role">
+
+        <action
+            android:id="@+id/action_roleSelectionFragment_to_loginFragment"
+            app:destination="@id/loginFragment">
+            <argument
+                android:name="role"
+                app:argType="string" />
+        </action>
+
+        <!-- Added for automatic session restoration -->
+        <action
+            android:id="@+id/action_roleSelectionFragment_to_buyerFragment"
+            app:destination="@id/buyerFragment" />
+
+        <action
+            android:id="@+id/action_roleSelectionFragment_to_sellerFragment"
+            app:destination="@id/sellerFragment" />
+
+    </fragment>
 
     <fragment
         android:id="@+id/loginFragment"
         android:name="com.example.unidash.LoginFragment"
-        android:label="LoginFragment" >
+        android:label="Login">
+
         <action
             android:id="@+id/action_loginFragment_to_signupFragment"
-            app:destination="@id/signupFragment" />
+            app:destination="@id/signupFragment">
+            <argument
+                android:name="role"
+                app:argType="string" />
+        </action>
+
         <action
-            android:id="@+id/action_loginFragment_to_profileFragment"
-            app:destination="@id/profileFragment" />
+            android:id="@+id/action_loginFragment_to_buyerFragment"
+            app:destination="@id/buyerFragment" />
+
+        <action
+            android:id="@+id/action_loginFragment_to_sellerFragment"
+            app:destination="@id/sellerFragment" />
     </fragment>
+
     <fragment
         android:id="@+id/signupFragment"
         android:name="com.example.unidash.SignupFragment"
-        android:label="SignupFragment" >
+        android:label="Sign Up">
+
         <action
             android:id="@+id/action_signupFragment_to_loginFragment"
-            app:destination="@id/loginFragment" />
+            app:destination="@id/loginFragment">
+            <argument
+                android:name="role"
+                app:argType="string" />
+        </action>
     </fragment>
+
     <fragment
         android:id="@+id/profileFragment"
         android:name="com.example.unidash.ProfileFragment"
-        android:label="ProfileFragment" >
+        android:label="Profile">
+
         <action
             android:id="@+id/action_profileFragment_to_editProfileFragment"
             app:destination="@id/editProfileFragment" />
     </fragment>
+
     <fragment
         android:id="@+id/editProfileFragment"
         android:name="com.example.unidash.EditProfileFragment"
-        android:label="EditProfileFragment" />
+        android:label="Edit Profile" />
+
+    <fragment
+        android:id="@+id/buyerFragment"
+        android:name="com.example.unidash.BuyerFragment"
+        android:label="Buyer Profile">
+
+        <action
+            android:id="@+id/action_buyerFragment_to_editProfileFragment"
+            app:destination="@id/editProfileFragment" />
+    </fragment>
+
+    <fragment
+        android:id="@+id/sellerFragment"
+        android:name="com.example.unidash.SellerFragment"
+        android:label="Seller Profile">
+
+        <action
+            android:id="@+id/action_sellerFragment_to_editProfileFragment"
+            app:destination="@id/editProfileFragment" />
+    </fragment>
+
 </navigation>

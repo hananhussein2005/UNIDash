@@ -24,6 +24,7 @@ class ProfileFragment : Fragment() {
 
     private var profileListener: ValueEventListener? = null
 
+
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
