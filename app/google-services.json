@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "701618899101",
+    "project_id": "unidash-43bf4",
+    "storage_bucket": "unidash-43bf4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:701618899101:android:0927fdb63a06405b8cec74",
+        "android_client_info": {
+          "package_name": "com.example.unidash"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDjCEDMGkGrIBsN5-Ikxuvn25Ap_FaSh4M"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
