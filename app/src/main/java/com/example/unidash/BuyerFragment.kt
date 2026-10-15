@@ -1,5 +1,6 @@
 package com.example.unidash
 
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -8,10 +9,12 @@ import android.view.ViewGroup
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import com.example.unidash.databinding.FragmentBuyerBinding
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
+import kotlinx.coroutines.launch
 
 class BuyerFragment : Fragment() {
 
@@ -23,14 +26,10 @@ class BuyerFragment : Fragment() {
 
     private val imagePicker =
         registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-            if (uri != null) {
-                validateAndPreviewImage(uri)
+            if (uri != null && _binding != null) {
+                binding.profileImage.setImageURI(uri)
             }
         }
-
-    companion object {
-        private const val MAX_IMAGE_BYTES = 500_000L
-    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -51,11 +50,6 @@ class BuyerFragment : Fragment() {
         auth = FirebaseAuth.getInstance()
         database = FirebaseDatabase.getInstance()
 
-        // Tap the picture to select a new image.
-        binding.profileImage.setOnClickListener {
-            imagePicker.launch("image/*")
-        }
-
         val user = auth.currentUser
 
         if (user == null) {
@@ -65,12 +59,9 @@ class BuyerFragment : Fragment() {
 
         val userId = user.uid
 
-        database.reference
-            .child("users")
-            .child(userId)
-            .get()
+        // Load the buyer's details from Firebase.
+        database.reference.child("users").child(userId).get()
             .addOnSuccessListener { snapshot ->
-
                 if (_binding == null) return@addOnSuccessListener
 
                 val role = snapshot.child("role")
@@ -94,21 +85,17 @@ class BuyerFragment : Fragment() {
                 binding.buyerTitle.text = "Buyer Profile"
 
                 binding.profileName.text =
-                    snapshot.child("name")
-                        .getValue(String::class.java) ?: ""
+                    snapshot.child("name").getValue(String::class.java) ?: ""
 
                 binding.profileEmail.text = user.email ?: ""
 
                 binding.profileAddress.text =
-                    snapshot.child("address")
-                        .getValue(String::class.java) ?: ""
+                    snapshot.child("address").getValue(String::class.java) ?: ""
 
                 binding.profilePhone.text =
-                    snapshot.child("phone")
-                        .getValue(String::class.java) ?: ""
+                    snapshot.child("phone").getValue(String::class.java) ?: ""
             }
             .addOnFailureListener { error ->
-
                 if (_binding == null) return@addOnFailureListener
 
                 Toast.makeText(
@@ -117,6 +104,51 @@ class BuyerFragment : Fragment() {
                     Toast.LENGTH_LONG
                 ).show()
             }
+
+        // Download the existing profile photo from the private S3 bucket.
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val photoBytes =
+                    S3ProfilePhotoManager.downloadProfilePhoto(userId)
+
+                if (_binding == null) return@launch
+
+                if (photoBytes != null && photoBytes.isNotEmpty()) {
+                    val bitmap = BitmapFactory.decodeByteArray(
+                        photoBytes,
+                        0,
+                        photoBytes.size
+                    )
+
+                    if (bitmap != null && _binding != null) {
+                        binding.profileImage.setImageBitmap(bitmap)
+                    } else {
+                        showMessage("The profile photo could not be decoded.")
+                    }
+                } else {
+                    android.util.Log.d(
+                        "BuyerFragment",
+                        "No profile photo was returned from S3."
+                    )
+                }
+            } catch (error: Exception) {
+                android.util.Log.e(
+                    "BuyerFragment",
+                    "Could not download buyer profile photo from S3",
+                    error
+                )
+
+                showMessage(
+                    "Could not load profile photo: " +
+                            (error.message ?: "Check S3 permissions.")
+                )
+            }
+        }
+
+        // Keep the existing image picker behavior.
+        binding.profileImage.setOnClickListener {
+            imagePicker.launch("image/*")
+        }
 
         binding.editProfileButton.setOnClickListener {
             findNavController().navigate(
@@ -132,63 +164,9 @@ class BuyerFragment : Fragment() {
         }
     }
 
-    private fun validateAndPreviewImage(uri: Uri) {
-        val context = context ?: return
-
-        try {
-            val input = context.contentResolver.openInputStream(uri)
-
-            if (input == null) {
-                Toast.makeText(
-                    context,
-                    "Could not read the selected image.",
-                    Toast.LENGTH_SHORT
-                ).show()
-                return
-            }
-
-            var totalBytes = 0L
-
-            input.use { stream ->
-                val buffer = ByteArray(8192)
-
-                while (true) {
-                    val bytesRead = stream.read(buffer)
-
-                    if (bytesRead == -1) break
-
-                    totalBytes += bytesRead
-
-                    if (totalBytes >= MAX_IMAGE_BYTES) {
-                        Toast.makeText(
-                            context,
-                            "Image must be smaller than 0.5 MB.",
-                            Toast.LENGTH_LONG
-                        ).show()
-                        return
-                    }
-                }
-            }
-
-            if (_binding == null) return
-
-            binding.profileImage.setImageURI(uri)
-
-            Toast.makeText(
-                context,
-                "Profile picture selected!",
-                Toast.LENGTH_SHORT
-            ).show()
-
-        } catch (e: Exception) {
-
-            if (_binding == null) return
-
-            Toast.makeText(
-                context,
-                "Could not load image: ${e.message}",
-                Toast.LENGTH_LONG
-            ).show()
+    private fun showMessage(message: String) {
+        context?.let {
+            Toast.makeText(it, message, Toast.LENGTH_LONG).show()
         }
     }
 

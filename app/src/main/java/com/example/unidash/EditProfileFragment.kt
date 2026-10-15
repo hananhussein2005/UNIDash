@@ -1,15 +1,22 @@
 package com.example.unidash
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import com.example.unidash.databinding.FragmentEditProfileBinding
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
+import kotlinx.coroutines.launch
+import java.io.ByteArrayOutputStream
 
 class EditProfileFragment : Fragment() {
 
@@ -18,6 +25,15 @@ class EditProfileFragment : Fragment() {
 
     private lateinit var auth: FirebaseAuth
     private lateinit var database: FirebaseDatabase
+
+    private var selectedPhotoBytes: ByteArray? = null
+
+    private val photoPicker =
+        registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+            if (uri != null && _binding != null) {
+                loadSelectedPhoto(uri)
+            }
+        }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -50,194 +66,281 @@ class EditProfileFragment : Fragment() {
         val userId = user.uid
         val currentAuthEmail = user.email ?: ""
 
-        // Load existing profile data
+        loadProfile(userId, currentAuthEmail)
+
+        binding.choosePhotoButton.setOnClickListener {
+            photoPicker.launch("image/*")
+        }
+
+        binding.saveProfileButton.setOnClickListener {
+            saveProfile(userId, currentAuthEmail)
+        }
+
+        binding.cancelButton.setOnClickListener {
+            findNavController().navigateUp()
+        }
+    }
+
+    private fun loadProfile(userId: String, currentAuthEmail: String) {
         database.reference
             .child("users")
             .child(userId)
             .get()
             .addOnSuccessListener { snapshot ->
-
-                if (_binding == null) {
-                    return@addOnSuccessListener
-                }
+                if (_binding == null) return@addOnSuccessListener
 
                 binding.nameEditText.setText(
-                    snapshot.child("name")
-                        .getValue(String::class.java) ?: ""
+                    snapshot.child("name").getValue(String::class.java) ?: ""
                 )
 
-                // Email comes from Firebase Authentication
-                binding.emailEditText.setText(
-                    currentAuthEmail
-                )
+                binding.emailEditText.setText(currentAuthEmail)
 
                 binding.addressEditText.setText(
-                    snapshot.child("address")
-                        .getValue(String::class.java) ?: ""
+                    snapshot.child("address").getValue(String::class.java) ?: ""
                 )
 
                 binding.phoneEditText.setText(
-                    snapshot.child("phone")
-                        .getValue(String::class.java) ?: ""
+                    snapshot.child("phone").getValue(String::class.java) ?: ""
                 )
             }
             .addOnFailureListener { error ->
+                if (_binding == null) return@addOnFailureListener
 
-                if (_binding == null) {
-                    return@addOnFailureListener
+                showToast("Could not load profile: ${error.message}")
+            }
+
+        // Load the existing photo directly from the private S3 bucket.
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val photoBytes =
+                    S3ProfilePhotoManager.downloadProfilePhoto(userId)
+
+                if (_binding != null && photoBytes != null) {
+                    val bitmap = BitmapFactory.decodeByteArray(
+                        photoBytes,
+                        0,
+                        photoBytes.size
+                    )
+
+                    if (bitmap != null && _binding != null) {
+                        binding.profileImageView.setImageBitmap(bitmap)
+                    }
                 }
+            } catch (error: Exception) {
+                // A user may not have uploaded a photo yet.
+                // Keep the default camera image in that case.
+                android.util.Log.e(
+                    "EditProfileFragment",
+                    "Could not load profile photo from S3",
+                    error
+                )
+            }
+        }
+    }
 
-                Toast.makeText(
-                    requireContext(),
-                    "Could not load profile: ${error.message}",
-                    Toast.LENGTH_LONG
-                ).show()
+    private fun loadSelectedPhoto(uri: Uri) {
+        try {
+            val bitmap = requireContext().contentResolver
+                .openInputStream(uri)
+                .use { input ->
+                    requireNotNull(input) {
+                        "Could not open the selected image."
+                    }
+                    BitmapFactory.decodeStream(input)
+                } ?: throw IllegalArgumentException("Invalid image.")
+
+            val compressedBytes = compressPhoto(bitmap)
+
+            if (compressedBytes == null) {
+                showToast(
+                    "Could not compress the photo below 0.5 MB. Choose another image."
+                )
+                return
             }
 
-        // Save profile
-        binding.saveProfileButton.setOnClickListener {
-
-            val name = binding.nameEditText.text
-                .toString()
-                .trim()
-
-            val email = binding.emailEditText.text
-                .toString()
-                .trim()
-
-            val address = binding.addressEditText.text
-                .toString()
-                .trim()
-
-            val phone = binding.phoneEditText.text
-                .toString()
-                .trim()
-
-            // Check that all fields are filled
-            if (name.isEmpty() ||
-                email.isEmpty() ||
-                address.isEmpty() ||
-                phone.isEmpty()
-            ) {
-
-                Toast.makeText(
-                    requireContext(),
-                    "Please fill in all fields",
-                    Toast.LENGTH_SHORT
-                ).show()
-
-                return@setOnClickListener
-            }
-
-            // These fields can be updated immediately.
-            // Email is intentionally NOT included here.
-            val profileUpdates = mapOf(
-                "name" to name,
-                "address" to address,
-                "phone" to phone
+            selectedPhotoBytes = compressedBytes
+            binding.profileImageView.setImageBitmap(
+                BitmapFactory.decodeByteArray(
+                    compressedBytes,
+                    0,
+                    compressedBytes.size
+                )
             )
 
-            // ------------------------------------------------
-            // EMAIL WAS CHANGED
-            // ------------------------------------------------
-            if (email != currentAuthEmail) {
+            showToast("Photo selected. Tap Save Changes to upload it.")
+        } catch (error: Exception) {
+            showToast("Could not select photo: ${error.message}")
+        }
+    }
 
-                user.verifyBeforeUpdateEmail(email)
-                    .addOnSuccessListener {
+    /**
+     * Produces JPEG bytes strictly below 500,000 bytes.
+     */
+    private fun compressPhoto(original: Bitmap): ByteArray? {
+        var bitmap = original
+        var attempts = 0
 
-                        // Save the other profile information.
-                        // DO NOT save the new email yet.
-                        database.reference
-                            .child("users")
-                            .child(userId)
-                            .updateChildren(profileUpdates)
-                            .addOnSuccessListener {
+        while (attempts < 12) {
+            for (quality in listOf(90, 80, 70, 60, 50, 40, 30)) {
+                val output = ByteArrayOutputStream()
 
-                                if (_binding == null) {
-                                    return@addOnSuccessListener
-                                }
+                bitmap.compress(
+                    Bitmap.CompressFormat.JPEG,
+                    quality,
+                    output
+                )
 
-                                Toast.makeText(
-                                    requireContext(),
-                                    "Verification email sent. Verify your new email, then log in again with your new email.",
-                                    Toast.LENGTH_LONG
-                                ).show()
+                val bytes = output.toByteArray()
+
+                if (bytes.isNotEmpty() && bytes.size < 500_000) {
+                    return bytes
+                }
+            }
+
+            if (bitmap.width <= 160 || bitmap.height <= 160) {
+                break
+            }
+
+            val newWidth = (bitmap.width * 0.75).toInt().coerceAtLeast(1)
+            val newHeight = (bitmap.height * 0.75).toInt().coerceAtLeast(1)
+
+            bitmap = Bitmap.createScaledBitmap(
+                bitmap,
+                newWidth,
+                newHeight,
+                true
+            )
+
+            attempts++
+        }
+
+        return null
+    }
+
+    private fun saveProfile(userId: String, currentAuthEmail: String) {
+        val user = auth.currentUser ?: run {
+            showToast("Please log in again.")
+            return
+        }
+
+        val name = binding.nameEditText.text.toString().trim()
+        val email = binding.emailEditText.text.toString().trim()
+        val address = binding.addressEditText.text.toString().trim()
+        val phone = binding.phoneEditText.text.toString().trim()
+
+        if (name.isEmpty() || email.isEmpty() ||
+            address.isEmpty() || phone.isEmpty()
+        ) {
+            showToast("Please fill in all fields.")
+            return
+        }
+
+        if (!android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
+            showToast("Please enter a valid email address.")
+            return
+        }
+
+        binding.saveProfileButton.isEnabled = false
+        binding.choosePhotoButton.isEnabled = false
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val updates = mutableMapOf<String, Any>(
+                    "name" to name,
+                    "address" to address,
+                    "phone" to phone
+                )
+
+                // Upload the photo first. Only save its URL if S3 confirms success.
+                val photoBytes = selectedPhotoBytes
+
+                if (photoBytes != null) {
+                    showToast("Uploading profile photo...")
+
+                    val photoUrl = S3ProfilePhotoManager.uploadProfilePhoto(
+                        userId,
+                        photoBytes
+                    )
+
+                    updates["photoUrl"] = photoUrl
+                }
+
+                if (email != currentAuthEmail) {
+                    user.verifyBeforeUpdateEmail(email)
+                        .addOnSuccessListener {
+                            saveUpdatesToFirebase(userId, updates) {
+                                if (_binding == null) return@saveUpdatesToFirebase
+
+                                showToast(
+                                    "Verification email sent. Verify your new email, then log in again with it."
+                                )
 
                                 findNavController().navigateUp()
                             }
-                            .addOnFailureListener { error ->
-
-                                if (_binding == null) {
-                                    return@addOnFailureListener
-                                }
-
-                                Toast.makeText(
-                                    requireContext(),
-                                    "Profile update failed: ${error.message}",
-                                    Toast.LENGTH_LONG
-                                ).show()
-                            }
-                    }
-                    .addOnFailureListener { error ->
-
-                        if (_binding == null) {
-                            return@addOnFailureListener
                         }
-
-                        Toast.makeText(
-                            requireContext(),
-                            "Email verification could not be sent: ${error.message}",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-
-            } else {
-
-                // ------------------------------------------------
-                // EMAIL WAS NOT CHANGED
-                // ------------------------------------------------
-
-                database.reference
-                    .child("users")
-                    .child(userId)
-                    .updateChildren(profileUpdates)
-                    .addOnSuccessListener {
-
-                        if (_binding == null) {
-                            return@addOnSuccessListener
+                        .addOnFailureListener { error ->
+                            enableButtons()
+                            showToast(
+                                "Email verification could not be sent: ${error.message}"
+                            )
                         }
+                } else {
+                    saveUpdatesToFirebase(userId, updates) {
+                        if (_binding == null) return@saveUpdatesToFirebase
 
-                        Toast.makeText(
-                            requireContext(),
-                            "Profile updated successfully!",
-                            Toast.LENGTH_SHORT
-                        ).show()
-
+                        showToast("Profile updated successfully!")
                         findNavController().navigateUp()
                     }
-                    .addOnFailureListener { error ->
+                }
+            } catch (error: Exception) {
+                enableButtons()
+                showToast(
+                    "Save failed: ${error.message ?: error.javaClass.simpleName}"
+                )
 
-                        if (_binding == null) {
-                            return@addOnFailureListener
-                        }
-
-                        Toast.makeText(
-                            requireContext(),
-                            "Update failed: ${error.message}",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
+                android.util.Log.e(
+                    "EditProfileFragment",
+                    "Profile photo upload or save failed",
+                    error
+                )
             }
         }
+    }
 
-        // Cancel
-        binding.cancelButton.setOnClickListener {
-            findNavController().navigateUp()
+    private fun saveUpdatesToFirebase(
+        userId: String,
+        updates: Map<String, Any>,
+        onSuccess: () -> Unit
+    ) {
+        database.reference
+            .child("users")
+            .child(userId)
+            .updateChildren(updates)
+            .addOnSuccessListener {
+                onSuccess()
+            }
+            .addOnFailureListener { error ->
+                enableButtons()
+                showToast("Firebase update failed: ${error.message}")
+            }
+    }
+
+    private fun enableButtons() {
+        if (_binding != null) {
+            binding.saveProfileButton.isEnabled = true
+            binding.choosePhotoButton.isEnabled = true
+        }
+    }
+
+    private fun showToast(message: String) {
+        context?.let {
+            Toast.makeText(it, message, Toast.LENGTH_LONG).show()
         }
     }
 
     override fun onDestroyView() {
         super.onDestroyView()
         _binding = null
+        selectedPhotoBytes = null
     }
 }

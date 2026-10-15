@@ -100,5 +100,5 @@ dependencies {
     implementation("com.google.firebase:firebase-database")
 
     // AWS SDK for Kotlin: Amazon S3
-    implementation("aws.sdk.kotlin:s3:1.9.15")
+    implementation("aws.sdk.kotlin:s3:1.6.66")
 }
